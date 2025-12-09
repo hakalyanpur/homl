@@ -1,0 +1,26 @@
+# Virtual environment
+venv/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Datasets (downloaded by notebooks)
+datasets/
+**/datasets/
+
+# IDE
+.vscode/
+.idea/
+
+# Claude Code (personal settings)
+.claude/
+
+# OS
+.DS_Store
