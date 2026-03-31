@@ -1,3 +1,57 @@
+# Chapter 2 — Concepts & Theory
+
+> **Notebook reference:** `notebooks/02_end_to_end_machine_learning_project.ipynb`
+> Each section below maps to concepts used in the notebook's 5 phases.
+
+---
+
+## Stratified Sampling
+
+### The problem with random splits
+
+When you split data into train/test sets randomly, you risk the split not being representative. If `median_income` is the strongest predictor of housing prices (correlation +0.69), a random split might over-represent high-income districts in training and under-represent them in testing — or vice versa.
+
+### How stratified splitting fixes this
+
+Stratified sampling ensures both sets mirror the full dataset's distribution:
+
+```
+Full dataset income distribution:
+  Low (0-1.5):     4%
+  Medium (1.5-3):  30%
+  High (3-4.5):    35%
+  Very high (4.5+): 31%
+
+Random split might give:
+  Training:  Low 3%, Medium 28%, High 38%, Very high 31%  ← skewed!
+  Test:      Low 6%, Medium 34%, High 29%, Very high 31%
+
+Stratified split guarantees:
+  Training:  Low 4%, Medium 30%, High 35%, Very high 31%  ← proportional
+  Test:      Low 4%, Medium 30%, High 35%, Very high 31%  ← proportional
+```
+
+### In practice
+
+```python
+# Bin continuous income into 5 categories
+housing["income_cat"] = pd.cut(housing["median_income"],
+    bins=[0., 1.5, 3.0, 4.5, 6., np.inf], labels=[1, 2, 3, 4, 5])
+
+# stratify= ensures proportional representation
+train, test = train_test_split(housing, test_size=0.2,
+    stratify=housing["income_cat"], random_state=42)
+```
+
+### When to use it
+
+Use stratified sampling when:
+- A feature is **highly predictive** and its distribution matters
+- The dataset is **small enough** that random chance could skew the split
+- A category is **rare** (e.g., ISLAND ocean proximity — only 5 districts)
+
+---
+
 # Scikit-Learn Preprocessing Pipeline
 
 ---
@@ -544,4 +598,199 @@ Train final model on full training set with best params
                               ↓
 Evaluate ONCE on test set  →  honest, final number
                               (might be slightly worse than $43,590)
+```
+
+---
+
+## Randomized Search
+
+### Why Grid Search isn't always enough
+
+Grid Search only tries values YOU specify. If you search `n_clusters=[5, 8, 10, 15]`, you'll never discover that `n_clusters=37` might be optimal. You're limited by your own imagination.
+
+### How RandomizedSearchCV works
+
+Instead of explicit lists, you provide **distributions** — ranges to sample from randomly:
+
+```python
+from scipy.stats import randint
+
+param_distribs = {
+    'preprocessing__geo__n_clusters': randint(low=3, high=50),   # any int from 3–49
+    'random_forest__max_features': randint(low=2, high=20),      # any int from 2–19
+}
+```
+
+Then you set a **budget** — how many random combinations to try:
+
+```
+n_iter=10 → "draw 10 random (n_clusters, max_features) pairs"
+
+Possible draws:
+  Combo 1:  n_clusters=37,  max_features=12
+  Combo 2:  n_clusters=8,   max_features=17
+  Combo 3:  n_clusters=28,  max_features=9
+  ...
+  Combo 10: n_clusters=22,  max_features=7
+```
+
+Each combo is evaluated with k-fold CV, just like Grid Search.
+
+### Grid Search vs Randomized Search
+
+```
+Grid Search:
+  You say: "try [5, 8, 10, 15]"         → 4 specific values
+  It tries: exactly those 4             → might miss the sweet spot between them
+
+Randomized Search:
+  You say: "try anything from 3 to 49"   → 47 possible values
+  It tries: 10 random picks              → can land anywhere in the range
+```
+
+| Aspect | GridSearchCV | RandomizedSearchCV |
+|--------|-------------|-------------------|
+| You define | Exact values to try | Range to sample from |
+| Search space | Narrow (your picks) | Wide (entire range) |
+| Budget control | Determined by grid size | You set `n_iter` |
+| Best for | Small, focused search | Wide exploration |
+| Typical workflow | After RandomizedSearch (zoom in) | First pass (explore broadly) |
+
+### The practical workflow
+
+```
+Step 1: RandomizedSearch with wide ranges
+        → discover roughly where the good values are
+        → e.g., "n_clusters around 30-45 seems good"
+
+Step 2: GridSearch around the best values found
+        → fine-tune within that neighborhood
+        → e.g., try [30, 35, 37, 40, 45]
+```
+
+### scipy.stats.randint
+
+`randint(low, high)` is a uniform distribution over integers in `[low, high)`. Every integer in the range is equally likely to be drawn. `random_state=42` makes the draws reproducible — same "random" combos every time you run it.
+
+---
+
+## Feature Importances
+
+### What they measure
+
+After training, a Random Forest can tell you how much each feature contributed to its predictions. The importance of a feature = the total reduction in prediction error from all splits using that feature, averaged across all trees.
+
+```
+How it's calculated (simplified):
+
+Tree 1, Split 3: splits on "median_income" → error drops by 500
+Tree 1, Split 7: splits on "median_income" → error drops by 300
+Tree 2, Split 1: splits on "median_income" → error drops by 450
+...across 100 trees × hundreds of splits...
+
+Total error reduction from "median_income" = very high → importance ~0.19
+Total error reduction from "ocean_ISLAND"  = very low  → importance ~0.00
+```
+
+All importances sum to 1.0.
+
+### Why they matter
+
+1. **Sanity check**: Does the model agree with domain knowledge? Income SHOULD matter most for housing prices. If "housing_median_age" ranked #1, something might be wrong.
+
+2. **Feature selection**: Features with ~0 importance could be dropped to simplify the pipeline without losing accuracy. Simpler models are faster and easier to maintain.
+
+3. **Debugging**: If a feature you expected to matter scores low, it might be:
+   - Redundant with another feature (both capture the same information)
+   - Poorly engineered (the transformation lost useful signal)
+   - Genuinely not predictive (your intuition was wrong)
+
+### How to access them
+
+```python
+final_model = rnd_search.best_estimator_
+
+# Feature importances from the Random Forest
+importances = final_model["random_forest"].feature_importances_
+
+# Feature names from preprocessing
+names = final_model["preprocessing"].get_feature_names_out()
+
+# Sort together, highest first
+sorted(zip(importances, names), reverse=True)
+```
+
+### Limitations
+
+Feature importances can be **misleading** when features are correlated. If two features carry similar information (e.g., `total_rooms` and `total_bedrooms`), the model might split the importance between them — making both look less important than they really are. This doesn't mean either feature is unimportant; it means their contributions are shared.
+
+---
+
+## Test Set Evaluation
+
+### Why the test set exists
+
+Throughout the ML workflow, we used cross-validation to make decisions:
+- Which model to use (Random Forest beat Linear Regression)
+- Which hyperparameters to choose (n_clusters=15, max_features=6)
+
+But we **chose based on CV scores** — so even those scores are slightly optimistic. The test set is the only truly unbiased estimate because it was never involved in any decision.
+
+### The exam analogy
+
+```
+Cross-validation  = practice exams    → helpful for studying, but you adjust
+                                        your strategy based on results
+Test set          = the final exam    → taken once, no adjustments allowed
+```
+
+### The critical rule: evaluate ONCE
+
+```
+                    ┌─────────────────────────────┐
+                    │          TEST SET            │
+                    │                              │
+                    │  ✓ Evaluate once             │
+                    │  ✗ Do NOT tune based on it   │
+                    │  ✗ Do NOT "try one more       │
+                    │    thing" and re-evaluate     │
+                    │                              │
+                    │  If you keep testing and      │
+                    │  adjusting, the test set      │
+                    │  becomes another training     │
+                    │  set — you lose your only     │
+                    │  honest estimate.             │
+                    └─────────────────────────────┘
+```
+
+### Confidence interval
+
+A single RMSE number has uncertainty — a different random 20% split would give a slightly different result. The 95% confidence interval quantifies this:
+
+```
+Test RMSE: $41,500
+95% CI: [$39,200, $43,700]
+
+Meaning: we're 95% confident the true generalization error
+is somewhere between $39,200 and $43,700.
+```
+
+The interval width depends on test set size — more test data → narrower interval → more certainty.
+
+### Interpreting the result
+
+```
+                      CV RMSE        Test RMSE      What it means
+                      ──────         ─────────      ─────────────
+Close match:          $43,590        $41,500        CV was honest. Model generalizes
+                                                    well. Ship it.
+
+Test much worse:      $43,590        $55,000        Overfit during tuning. Tried too
+                                                    many combinations and got lucky
+                                                    on CV. Need more data or simpler
+                                                    model.
+
+Test much better:     $43,590        $38,000        Got lucky with the test split.
+                                                    Don't celebrate too hard — the
+                                                    CV estimate is more reliable.
 ```
