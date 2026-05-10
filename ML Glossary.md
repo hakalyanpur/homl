@@ -316,3 +316,84 @@ encoder.get_feature_names_out()   # columns that come OUT after transform
 | **RMSE** | Std dev of prediction errors | `sqrt(mean(errors²))` |
 | **Normal Distribution** | Bell curve — most values near the mean | StandardScaler assumes this shape |
 | **Uniform Distribution** | Every value in a range is equally likely | `randint(3, 50)` — each int same chance |
+| **Arithmetic Mean** | Sum of values divided by count | `(a + b) / 2` for two values |
+| **Harmonic Mean** | Reciprocal of the average of reciprocals; dominated by the smaller value | `2·a·b / (a + b)` for two values — used in F1 |
+
+---
+
+# Chapter 3 — Classification
+
+---
+
+### Class Imbalance
+
+**Class Imbalance** — When one class dominates the dataset (e.g., ~90% non-5s, ~10% 5s in the MNIST binary task).
+> *Accuracy becomes misleading — a "always predict the majority class" classifier can score very high without learning anything.*
+
+**Majority Class** — The more frequent class.
+**Minority Class** — The less frequent class. Usually the one you actually care about detecting.
+
+---
+
+### Confusion Matrix
+
+**Confusion Matrix** — For binary classification, a 2×2 grid tallying the four possible outcomes.
+
+```
+                    Predicted
+                 Negative    Positive
+Actual  Negative    TN          FP
+        Positive    FN          TP
+```
+
+**True Positive (TP)** — Model said positive, label was positive. Correct.
+**True Negative (TN)** — Model said negative, label was negative. Correct.
+**False Positive (FP)** — Model said positive, label was negative. *False alarm.*
+**False Negative (FN)** — Model said negative, label was positive. *Missed detection.*
+
+> **Mnemonic:** first letter = was the model right (T/F)? Second letter = what did it say (P/N)?
+
+**`cross_val_predict`** — Like `cross_val_score` but returns the out-of-fold *predictions* rather than a score. Feed directly to `confusion_matrix` for leakage-free evaluation on the training set.
+
+---
+
+### Classification Metrics
+
+**Accuracy** — `(TP + TN) / total`. Fraction correct. Misleading on imbalanced data.
+
+**Precision** — `TP / (TP + FP)`. Of everything the model flagged as positive, what fraction really was?
+> *Punishes false alarms. High precision = selective model.*
+
+**Recall (Sensitivity, True Positive Rate)** — `TP / (TP + FN)`. Of the actual positives in the data, what fraction did the model catch?
+> *Punishes missed detections. High recall = thorough model.*
+
+**Precision-Recall Tradeoff** — Raising one tends to lower the other. Controlled by the decision threshold (the score above which the model predicts "positive"). Pick the operating point that matches your problem's cost structure.
+
+**When to prefer which:**
+
+| Prefer | Example problems |
+|--------|------------------|
+| **Precision** | Spam filter, criminal conviction, medical intervention with risky side effects |
+| **Recall**    | Cancer screening, fraud / security alerts, airport security |
+
+---
+
+### F1 and Fβ
+
+**F1 Score** — `2 · P · R / (P + R)`. The **harmonic mean** of precision and recall. Single summary number rewarding classifiers that are good at **both**.
+> *If either P or R is near 0, F1 is near 0 — unlike the arithmetic mean, which can stay around 0.5.*
+
+**Fβ Score** — Generalization of F1: `(1 + β²) · P · R / (β² · P + R)`.
+- β > 1 emphasizes **recall** (e.g., F2 for medical screening)
+- β < 1 emphasizes **precision**
+- β = 1 → F1 (balanced)
+
+---
+
+### Decision Score vs Prediction
+
+**Decision Score** — The raw real-valued output of a linear classifier: `w · x + b`. Magnitude indicates confidence.
+**Prediction** — The discrete class label derived from the score: `predict = positive if score > threshold else negative`.
+**Decision Threshold** — The cutoff applied to the score. Default is 0 for `SGDClassifier`. Moving it up raises precision and lowers recall; moving it down does the opposite.
+
+`sgd_clf.decision_function(X)` returns raw scores; `sgd_clf.predict(X)` returns thresholded labels.

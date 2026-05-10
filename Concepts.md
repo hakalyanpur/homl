@@ -959,3 +959,202 @@ Test much better:     $43,590        $38,000        Got lucky with the test spli
                                                     Don't celebrate too hard — the
                                                     CV estimate is more reliable.
 ```
+
+---
+
+# Chapter 3 — Classification
+
+> **Notebook reference:** `notebooks/03_classification.ipynb`
+> MNIST as a testbed. Moves from a single binary "is it a 5?" classifier through proper performance measurement.
+
+---
+
+## Class Imbalance and Why Accuracy Misleads
+
+### The trap
+
+MNIST digits are roughly uniform across 0–9, so ~10% of images are 5s and ~90% are not. A binary classifier that **always** predicts "not a 5" — ignoring the pixels entirely — scores ~90% accuracy out of the box. Our trained `SGDClassifier` scored ~96%, only ~6 percentage points above that dumb baseline.
+
+### Why it happens
+
+Accuracy = `(correct predictions) / (total predictions)`. When one class dominates, defaulting to the majority class gets you most of the way there — without the model learning anything about the minority class at all.
+
+### The fix
+
+Use metrics that examine each class separately: precision, recall, F1, ROC/AUC. Accuracy is a legitimate first-look metric only when classes are roughly balanced.
+
+### Real-world impact
+
+```
+Problem                  Positive rate    Accuracy trap
+─────────────────────    ─────────────    ─────────────
+Fraud detection          ~0.1%            Always-"no fraud" scores 99.9%
+Disease screening        ~1%              Always-"healthy" scores 99%
+Spam filter              ~30-50%          Accuracy is closer to useful
+MNIST 5-detector         ~10%             Always-"not 5" scores 90%
+```
+
+---
+
+## Confusion Matrix
+
+The confusion matrix is a 2×2 grid (for binary classification) showing all four possible prediction outcomes:
+
+```
+                    Predicted
+                 Negative    Positive
+Actual  Negative    TN          FP
+        Positive    FN          TP
+```
+
+### The four cells
+
+| Cell | Name | Meaning |
+|------|------|---------|
+| **TN** | True Negative | Correctly said negative |
+| **FP** | False Positive | Said positive, wasn't. *False alarm.* |
+| **FN** | False Negative | Said negative, was. *Missed detection.* |
+| **TP** | True Positive | Correctly said positive |
+
+**Mnemonic:** first letter (T/F) = *was the model right?* Second letter (P/N) = *what did it say?* So "False Negative" = said Negative, was wrong → missed a real positive.
+
+### Why it matters
+
+Accuracy collapses all four cells into one ratio. The confusion matrix **keeps the structure**, so you can see:
+
+- Which kind of error the model makes more of (FP or FN)
+- Whether errors are symmetric or skewed
+- The raw counts that precision, recall, and F1 are derived from
+
+### Asymmetric costs
+
+FP and FN are **not interchangeable** in the real world:
+
+| Problem | Worse error | Why |
+|---------|-------------|-----|
+| Cancer screening | **FN** | Missed diagnosis — patient goes untreated |
+| Spam filter | **FP** | Real email buried in the spam folder |
+| Fraud detection | **FN** | Money lost; FP just annoys the customer |
+| Criminal conviction | **FP** | Innocent person punished |
+| Airport security | **FN** | Threat boards the plane |
+
+The metric you optimize should match which error costs more.
+
+### Computing it without leakage
+
+```python
+from sklearn.model_selection import cross_val_predict
+from sklearn.metrics import confusion_matrix
+
+y_train_pred = cross_val_predict(clf, X, y, cv=3)
+confusion_matrix(y, y_train_pred)
+```
+
+`cross_val_predict` returns a prediction for every row, trained on folds that excluded it. No example is predicted by a model that saw it during training.
+
+**sklearn's output layout:**
+
+```
+[[TN, FP],
+ [FN, TP]]
+```
+
+Diagonal = correct. Off-diagonal = errors. Whichever off-diagonal is larger tells you the model's dominant failure mode.
+
+---
+
+## Precision, Recall, and the Tradeoff
+
+Two derived metrics that summarize the confusion matrix, each answering a specific question.
+
+### Precision
+
+```
+precision = TP / (TP + FP)
+```
+
+**Of everything the model said was positive, what fraction really was?**
+
+- Denominator = positive **predictions**
+- Punishes: false alarms (FP)
+- Rises when the model is **selective** — only calls things positive when very sure
+
+### Recall (also called Sensitivity or True Positive Rate)
+
+```
+recall = TP / (TP + FN)
+```
+
+**Of the actual positives, what fraction did the model catch?**
+
+- Denominator = real positives
+- Punishes: missed detections (FN)
+- Rises when the model is **thorough** — rarely lets a real positive slip through
+
+### The asymmetry — why you can't just maximize one
+
+You can trivially get 100% precision: predict "positive" for only the single example you're most confident about. You'll be right on that one prediction (P = 1.0) but miss thousands of real positives (R ≈ 0).
+
+You can trivially get 100% recall: predict "positive" for **everything**. You'll catch every real positive (R = 1.0) but have thousands of false alarms (P ≈ class rate).
+
+Real classifiers live somewhere on the spectrum — raising one tends to lower the other. This is the **precision-recall tradeoff**, controlled by the decision threshold (the score above which the model says "positive").
+
+### Which one to prefer
+
+| Scenario | Prefer | Why |
+|----------|--------|-----|
+| Cancer screening | **Recall** | Missing disease is catastrophic |
+| Security / fraud alerts | **Recall** | False alarm is cheap, miss is not |
+| Spam filter | **Precision** | Don't bury legitimate email |
+| Criminal conviction | **Precision** | Don't punish the innocent |
+| Medical surgery intake | **Precision** | Operating on someone who didn't need it is harmful |
+| Costs roughly balanced | **F1** | Summarized below |
+
+---
+
+## F1 Score and the Harmonic Mean
+
+### The formula
+
+```
+F1 = 2 · (P · R) / (P + R)
+```
+
+This is the **harmonic mean** of precision and recall — not the ordinary (arithmetic) mean. The distinction matters.
+
+### Why harmonic, not arithmetic
+
+Arithmetic mean treats P and R symmetrically: raising one by 0.1 offsets lowering the other by 0.1. That's the wrong model — a classifier with P = 1.0 and R = 0.0 catches no real positives at all, yet arithmetic mean calls it "0.5" (halfway decent).
+
+Harmonic mean is **dominated by the smaller value**. If either metric is near zero, F1 is near zero, regardless of how high the other is.
+
+### Numerical contrast
+
+```
+P      R       Arithmetic mean    F1 (harmonic)
+────   ────    ────────────────   ─────────────
+0.9    0.9          0.90              0.90
+0.9    0.1          0.50              0.18
+1.0    0.0          0.50              0.00
+0.5    0.5          0.50              0.50
+1.0    0.5          0.75              0.67
+```
+
+F1 only rewards classifiers that are genuinely good at both. You can't game F1 by maxing out a single metric.
+
+### When F1 is *not* the right choice
+
+F1 implicitly assumes precision and recall matter equally. When they don't — cancer screening cares far more about recall, spam filters far more about precision — F1 is misleading. Alternatives:
+
+- **Fβ score**: `Fβ = (1 + β²) · (P · R) / (β² · P + R)`. β > 1 emphasizes recall (F2 is common for recall-focused tasks); β < 1 emphasizes precision.
+- **Report P and R separately** and pick an operating point explicitly using the precision-recall curve.
+
+### Example from the MNIST 5-detector
+
+```
+Precision = 0.84    ← few false alarms
+Recall    = 0.65    ← misses 35% of real 5s
+F1        = 0.73    ← harmonic mean, below arithmetic (0.745)
+```
+
+The classifier is cautious — it hardly ever cries wolf, but misses a third of real 5s. F1 correctly reflects the recall weakness dragging the overall score down.
